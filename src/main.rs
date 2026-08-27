@@ -21,6 +21,14 @@ struct Cli {
     /// Minimum length of printable ASCII strings to extract.
     #[arg(short = 'm', long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=4096))]
     min_string_length: u16,
+
+    /// Maximum findings displayed per category (the total is always reported).
+    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u16).range(1..=10_000))]
+    max_results: u16,
+
+    /// Emit machine-readable JSON instead of the text report.
+    #[arg(long)]
+    json: bool,
 }
 
 fn main() -> ExitCode {
@@ -45,6 +53,16 @@ fn run(cli: &Cli) -> Result<(), String> {
     let bytes = fs::read(&cli.file)
         .map_err(|error| format!("cannot read '{}': {error}", cli.file.display()))?;
     let result = ravenscanner::scan_bytes(&bytes, usize::from(cli.min_string_length));
-    ravenscanner::report::print_report(&cli.file, &result);
+    if cli.json {
+        let json = ravenscanner::report::render_json_report(
+            &cli.file,
+            &result,
+            usize::from(cli.max_results),
+        )
+        .map_err(|error| format!("cannot serialize JSON report: {error}"))?;
+        println!("{json}");
+    } else {
+        ravenscanner::report::print_report(&cli.file, &result, usize::from(cli.max_results));
+    }
     Ok(())
 }

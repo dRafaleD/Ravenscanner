@@ -60,6 +60,8 @@ pub struct RiskScore {
 #[derive(Debug, Clone)]
 pub struct ScanResult {
     pub byte_count: usize,
+    pub sha256: String,
+    pub entropy: f64,
     pub elf: crate::elf::ElfInspection,
     pub strings: Vec<ExtractedString>,
     pub findings: Vec<Finding>,

@@ -15,7 +15,13 @@ const SUSPICIOUS_WEIGHTS: [(&str, u8); 10] = [
     ("shell-bin-dash", 8),
 ];
 
+const HIGH_ENTROPY_THRESHOLD: f64 = 7.2;
+
 pub fn calculate_risk(findings: &[Finding]) -> RiskScore {
+    calculate_risk_with_entropy(findings, 0.0)
+}
+
+pub fn calculate_risk_with_entropy(findings: &[Finding], entropy: f64) -> RiskScore {
     let mut contributions = Vec::new();
     let unique_rules: HashSet<_> = findings.iter().map(|finding| finding.rule).collect();
 
@@ -36,6 +42,17 @@ pub fn calculate_risk(findings: &[Finding]) -> RiskScore {
         "Unique persistence-location rules",
         &mut contributions,
     );
+
+    // High entropy is common in compressed and encrypted benign files, so it is
+    // intentionally a small contribution and never a verdict by itself.
+    if entropy >= HIGH_ENTROPY_THRESHOLD {
+        contributions.push(ScoreContribution {
+            description: format!(
+                "High overall entropy ({entropy:.2}/8.00); weak packing/encryption heuristic"
+            ),
+            points: 5,
+        });
+    }
     add_capped_category_score(
         findings,
         FindingCategory::Url,
@@ -133,5 +150,13 @@ mod tests {
             });
         }
         assert_eq!(calculate_risk(&findings).total, 100);
+    }
+
+    #[test]
+    fn high_entropy_adds_only_a_small_explained_contribution() {
+        let score = calculate_risk_with_entropy(&[], 7.8);
+        assert_eq!(score.total, 5);
+        assert_eq!(score.contributions.len(), 1);
+        assert!(score.contributions[0].description.contains("weak"));
     }
 }
