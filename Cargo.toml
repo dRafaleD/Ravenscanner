@@ -1,0 +1,14 @@
+[package]
+name = "ravenscanner"
+version = "0.1.0"
+edition = "2024"
+description = "A Linux-only defensive static file triage CLI"
+license = "MIT"
+
+[[bin]]
+name = "ravenscanner"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+regex = "1.11"
