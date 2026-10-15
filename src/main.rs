@@ -37,7 +37,10 @@ fn main() -> ExitCode {
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("ravenscanner: {message}");
+            eprintln!(
+                "ravenscanner: {}",
+                ravenscanner::report::terminal_literal(&message)
+            );
             ExitCode::FAILURE
         }
     }

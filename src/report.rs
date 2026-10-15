@@ -10,10 +10,30 @@ pub fn print_report(path: &Path, result: &ScanResult, max_results: usize) {
     print!("{}", render_text_report(path, result, max_results));
 }
 
+pub fn terminal_literal(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| {
+            if character.is_control()
+                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            {
+                character.escape_unicode().collect::<Vec<_>>()
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
+}
+
 pub fn render_text_report(path: &Path, result: &ScanResult, max_results: usize) -> String {
     let mut output = String::new();
     writeln!(output, "RavenScanner static triage report").unwrap();
-    writeln!(output, "File: {}", path.display()).unwrap();
+    writeln!(
+        output,
+        "File: {}",
+        terminal_literal(&path.display().to_string())
+    )
+    .unwrap();
     writeln!(output, "Size: {} bytes", result.byte_count).unwrap();
     writeln!(output, "SHA-256: {}", result.sha256).unwrap();
     writeln!(output, "Entropy: {:.2} / 8.00", result.entropy).unwrap();
@@ -79,7 +99,7 @@ fn write_elf_information(output: &mut String, inspection: &ElfInspection, max_re
             } else {
                 write_counted_heading(output, "  Sections", header.sections.len(), max_results);
                 for name in header.sections.iter().take(max_results) {
-                    writeln!(output, "    {name}").unwrap();
+                    writeln!(output, "    {}", terminal_literal(name)).unwrap();
                 }
             }
         }
@@ -107,7 +127,13 @@ fn write_category(
         writeln!(output, "  none").unwrap();
     } else {
         for finding in matches.into_iter().take(max_results) {
-            writeln!(output, "  - 0x{:08x}  {}", finding.offset, finding.value).unwrap();
+            writeln!(
+                output,
+                "  - 0x{:08x}  {}",
+                finding.offset,
+                terminal_literal(&finding.value)
+            )
+            .unwrap();
         }
     }
     writeln!(output).unwrap();
@@ -282,6 +308,29 @@ fn json_elf(inspection: &ElfInspection, max_results: usize) -> Option<JsonElf<'_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn untrusted_names_are_literal_but_json_retains_original_data() {
+        let mut result = crate::scan_bytes(b"hello", 4);
+        let name = "\u{1b}]8;;https://example.test\u{7}name\r\n\u{202e}";
+        result.elf = crate::elf::ElfInspection::Valid(crate::elf::ElfHeader {
+            class: crate::elf::ElfClass::Elf64,
+            endianness: crate::elf::Endianness::Little,
+            architecture: crate::elf::MachineArchitecture::X86_64,
+            entry_point: 0,
+            sections: vec![name.into()],
+            section_error: None,
+        });
+        let report = render_text_report(Path::new(name), &result, 10);
+        assert!(!report.contains('\u{1b}'));
+        assert!(!report.contains('\r'));
+        assert!(!report.contains('\u{202e}'));
+        assert!(report.contains("name"));
+        let json: serde_json::Value =
+            serde_json::from_str(&render_json_report(Path::new("sample"), &result, 10).unwrap())
+                .unwrap();
+        assert_eq!(json["elf"]["sections"][0], name);
+    }
 
     #[test]
     fn serializes_stable_json_fields() {
