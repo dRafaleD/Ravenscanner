@@ -3,6 +3,8 @@ use std::fmt;
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELF32_HEADER_SIZE: usize = 52;
 const ELF64_HEADER_SIZE: usize = 64;
+const MAX_SECTION_NAME_BYTES: usize = 4096;
+const MAX_TOTAL_SECTION_NAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElfClass {
@@ -224,6 +226,7 @@ fn parse_section_names(
     )?;
 
     let mut sections = Vec::new();
+    let mut retained_bytes = 0_usize;
     for index in 0..usize::from(section_count) {
         let header_start = table_start + index * usize::from(entry_size);
         let header = checked_range(
@@ -241,9 +244,16 @@ fn parse_section_names(
             .ok_or_else(|| format!("section {index} name offset is outside the string table"))?;
         let name_end = name_bytes
             .iter()
+            .take(MAX_SECTION_NAME_BYTES + 1)
             .position(|&byte| byte == 0)
-            .ok_or_else(|| format!("section {index} name is not null terminated"))?;
+            .ok_or_else(|| {
+                format!("section {index} name is unterminated or exceeds the safety limit")
+            })?;
         let name = String::from_utf8_lossy(&name_bytes[..name_end]).into_owned();
+        retained_bytes = retained_bytes.saturating_add(name.len());
+        if retained_bytes > MAX_TOTAL_SECTION_NAME_BYTES {
+            return Err("total section-name bytes exceed the safety limit".into());
+        }
         if !name.is_empty() {
             sections.push(name);
         }
@@ -312,6 +322,45 @@ fn malformed(reason: String) -> ElfInspection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn repeated_section_names(count: u16, name_length: usize) -> Vec<u8> {
+        let names_offset = ELF64_HEADER_SIZE + usize::from(count) * 64;
+        let mut bytes = vec![0_u8; names_offset + name_length + 2];
+        bytes[..ELF64_HEADER_SIZE].copy_from_slice(&elf_header(2, 1, 62, 0));
+        bytes[40..48].copy_from_slice(&(ELF64_HEADER_SIZE as u64).to_le_bytes());
+        bytes[58..60].copy_from_slice(&64_u16.to_le_bytes());
+        bytes[60..62].copy_from_slice(&count.to_le_bytes());
+        bytes[62..64].copy_from_slice(&1_u16.to_le_bytes());
+        for index in 0..usize::from(count) {
+            let start = ELF64_HEADER_SIZE + index * 64;
+            bytes[start..start + 4].copy_from_slice(&1_u32.to_le_bytes());
+        }
+        let names_header = ELF64_HEADER_SIZE + 64;
+        bytes[names_header + 24..names_header + 32]
+            .copy_from_slice(&(names_offset as u64).to_le_bytes());
+        bytes[names_header + 32..names_header + 40]
+            .copy_from_slice(&((name_length + 2) as u64).to_le_bytes());
+        bytes[names_offset + 1..names_offset + name_length + 1].fill(b'a');
+        bytes
+    }
+
+    #[test]
+    fn rejects_long_names_and_aggregate_copy_amplification() {
+        for bytes in [
+            repeated_section_names(2, 5000),
+            repeated_section_names(1024, 2048),
+        ] {
+            let ElfInspection::Valid(header) = inspect(&bytes) else {
+                panic!("base header should remain available")
+            };
+            assert!(header.section_error.is_some());
+            assert!(header.sections.is_empty());
+        }
+        let ElfInspection::Valid(header) = inspect(&repeated_section_names(3, 5)) else {
+            panic!("valid")
+        };
+        assert_eq!(header.sections, vec!["aaaaa"; 3]);
+    }
 
     fn elf_header(class: u8, endianness: u8, machine: u16, entry_point: u64) -> Vec<u8> {
         let size = if class == 1 {
