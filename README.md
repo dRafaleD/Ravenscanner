@@ -333,7 +333,7 @@ Current limitations include:
 * heuristic scoring can produce false positives and false negatives
 * high entropy alone does not indicate malicious behavior
 
-RavenScanner is not production-ready and should not replace specialized incident-response, malware-analysis, or reverse-engineering tools.
+Use RavenScanner alongside specialized incident-response, malware-analysis, and reverse-engineering tools.
 
 ## Responsible use
 
